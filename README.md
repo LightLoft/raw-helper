@@ -8,6 +8,7 @@ and the protocol the application uses to talk to it.
 |-------------|---------------------|--------------------------|------|
 | `protocol/` | `loft-raw-protocol` | MIT OR Apache-2.0        | Messages, framing, descriptor passing, shared memory |
 | `helper/`   | `loft-raw-helper`   | LGPL-2.1-only            | The helper process, built on [rawler](https://github.com/dnglab/dnglab) (LGPL-2.1) |
+| `fuzz/`     | `loft-raw-fuzz`     | LGPL-2.1-only            | Fuzz targets (nightly toolchain) |
 
 ## How it works
 
@@ -18,6 +19,23 @@ and the protocol the application uses to talk to it.
   descriptor travels with the reply. The receiver checks the real size before mapping it.
 - Decoder panics are caught and answered as errors; a crash or a hang only costs the file being
   read: the application restarts the helper.
+- On macOS the helper confines itself with a Seatbelt profile (`helper/src/system/sandbox.sb`)
+  before reading any request: no network, no file writes, no access to the user's files; it
+  refuses to run if it cannot. A `SandboxCheck` request lets the application verify it.
+- Any single allocation above 2 GiB is refused (`helper/src/alloc.rs`): a file declaring huge
+  dimensions stops the helper instead of exhausting the machine's memory.
+- Files rawler cannot read fall back to the system decoders (ImageIO and Core Image on macOS),
+  inside the same sandboxed process.
+
+## Fuzzing
+
+`fuzz/` holds three cargo-fuzz targets: `decode` (untrusted files through the decoding steps),
+`request` (the helper's side of the protocol) and `reply` (the application's side: a compromised
+helper must not be able to crash it).
+
+```sh
+cargo +nightly fuzz run --fuzz-dir fuzz decode
+```
 
 ## Building
 

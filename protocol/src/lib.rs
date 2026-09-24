@@ -41,6 +41,8 @@ pub enum Request {
     Close {
         id: u64,
     },
+    /// Self-test: the helper tries what its sandbox must forbid and reports what succeeded.
+    SandboxCheck,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -48,6 +50,8 @@ pub enum Reply {
     Hello {
         version: u32,
         decoder: String,
+        /// Whether the helper runs inside its sandbox (always, on macOS).
+        sandboxed: bool,
     },
     /// Headers only: answered without decoding any pixel.
     Opened {
@@ -70,6 +74,11 @@ pub enum Reply {
     },
     Closed {
         id: u64,
+    },
+    /// Forbidden operations that nevertheless succeeded (empty when the sandbox holds).
+    SandboxCheck {
+        sandboxed: bool,
+        escapes: Vec<String>,
     },
     Failed {
         id: u64,

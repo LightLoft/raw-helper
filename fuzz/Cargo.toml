@@ -1,0 +1,42 @@
+[package]
+name = "loft-raw-fuzz"
+version = "0.0.0"
+edition = "2021"
+license = "LGPL-2.1-only"
+publish = false
+description = "Fuzz targets for the LightLoft raw helper and its protocol (cargo +nightly fuzz)"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+loft-raw-helper = { path = "../helper" }
+loft-raw-protocol = { path = "../protocol" }
+postcard = { version = "1.1.3", default-features = false, features = ["use-std"] }
+rawler = "=0.8.0"
+
+# Standalone workspace: built with nightly, outside the application's workspace.
+[workspace]
+members = ["."]
+
+[[bin]]
+name = "decode"
+path = "fuzz_targets/decode.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "request"
+path = "fuzz_targets/request.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "reply"
+path = "fuzz_targets/reply.rs"
+test = false
+doc = false
+bench = false

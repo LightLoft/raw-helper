@@ -1,0 +1,43 @@
+;; Sandbox of the LightLoft raw helper (macOS Seatbelt profile, applied by the helper itself
+;; right after start-up, before it reads any request).
+;;
+;; Everything is denied unless allowed below: no network, no file writes, no reading of the
+;; user's files. Files to decode arrive as already-open descriptors.
+
+(version 1)
+(deny default)
+(import "system.sb")
+
+;; Libraries, frameworks and their resources, loaded lazily by the decoders.
+(allow file-read* file-map-executable
+  (subpath "/System")
+  (subpath "/usr/lib")
+  (subpath "/Library/Apple")
+  (subpath "/private/var/db/dyld")
+  (subpath "/private/var/db/timezone"))
+(allow file-read-metadata)
+
+;; The file being decoded: its descriptor is reopened through /dev/fd (never a path).
+(allow file-read* (literal "/dev/fd") (regex #"^/dev/fd/[0-9]+$"))
+
+;; Replies: POSIX shared memory objects, named /lfr... by the protocol.
+(allow ipc-posix-shm-read-data ipc-posix-shm-read-metadata
+       ipc-posix-shm-write-create ipc-posix-shm-write-data ipc-posix-shm-write-unlink
+  (ipc-posix-name-prefix "/lfr"))
+
+;; GPU, for Core Image.
+(allow iokit-open
+  (iokit-user-client-class "AGXDeviceUserClient")
+  (iokit-user-client-class "AGXSharedUserClient")
+  (iokit-user-client-class "IOSurfaceRootUserClient")
+  (iokit-user-client-class "IOAccelDevice2")
+  (iokit-user-client-class "IOAccelSharedUserClient2"))
+(allow mach-lookup
+  (global-name "com.apple.MTLCompilerService")
+  (global-name "com.apple.cvmsServ")
+  (global-name "com.apple.gpumemd.source"))
+
+(allow sysctl-read)
+
+;; system.sb lets every process read the system configuration; the decoders do not need it.
+(deny file-read* (subpath "/private/etc") (subpath "/private/var/root"))
