@@ -43,7 +43,9 @@ cargo +nightly fuzz run --fuzz-dir fuzz decode
 cargo build --release --manifest-path helper/Cargo.toml
 ```
 
-The helper links rawler `0.8.0` (pinned in `helper/Cargo.toml`). To use a modified rawler,
+The helper links rawler `0.8.0` with our fuzzing fixes, from the public fork
+[LightLoft/dnglab](https://github.com/LightLoft/dnglab) (tag `v0.8.0-lightloft.1`, pinned by
+revision in `helper/Cargo.toml`). To use a modified rawler,
 point that dependency to your copy (for instance with `[patch.crates-io]`) and rebuild; the
 resulting `loft-raw-helper` binary replaces the one shipped with LightLoft.
 

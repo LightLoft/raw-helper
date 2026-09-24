@@ -10,7 +10,8 @@ repository = "https://github.com/LightLoft/raw-helper"
 [dependencies]
 bytemuck = "1.25.2"
 loft-raw-protocol = { path = "../protocol" }
-rawler = "=0.8.0"
+# rawler 0.8.0 with fuzzing fixes, from our public fork (tag v0.8.0-lightloft.1).
+rawler = { git = "https://github.com/LightLoft/dnglab", rev = "5981ed07afd800f7b197c2eeeff250824ec87b89" }
 
 # System decoders (src/system/macos.rs): ImageIO for non-raw formats and previews, Core Image for
 # raw files rawler cannot read.
