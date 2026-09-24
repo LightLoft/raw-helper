@@ -2,7 +2,9 @@
 //! its own, so that a malformed file can at worst crash this helper, never the application.
 //!
 //! Its standard input is a Unix socket to the application (see `loft-raw-protocol`). It never
-//! opens a path: files arrive as descriptors, and pixels leave in shared memory.
+//! opens a path: files arrive as descriptors, and pixels leave in shared memory. What rawler
+//! cannot read (non-raw formats, some raw files, missing previews) falls back to the system's
+//! decoders (`system`), in this same process.
 //!
 //! Licensed LGPL-2.1-only, like rawler, which it links statically: its full source is published
 //! so that it can be rebuilt against a modified rawler.
@@ -27,6 +29,10 @@ use rawler::rawimage::RawPhotometricInterpretation;
 use rawler::rawsource::RawSource;
 use rawler::{RawImage, RawImageData};
 
+mod system;
+
+use system::SystemFile;
+
 /// Files kept open between requests; the app closes them, this only bounds a misbehaving peer.
 const MAX_OPEN_FILES: usize = 8;
 
@@ -34,6 +40,21 @@ struct OpenFile {
     source: RawSource,
     /// Keeps the received descriptor alive while `source` maps it.
     _fd: OwnedFd,
+    /// Whether rawler recognised the file.
+    rawler: bool,
+    /// System decoder, created on first need (always, when rawler did not recognise the file).
+    system: Option<Result<SystemFile, String>>,
+    extension: Option<String>,
+}
+
+impl OpenFile {
+    fn system(&mut self) -> Result<&SystemFile, String> {
+        let (source, extension) = (&self.source, self.extension.as_deref());
+        let system = self.system.get_or_insert_with(|| {
+            guarded(|| SystemFile::open(source.buf(), extension).map(|(file, _)| file))
+        });
+        system.as_ref().map_err(Clone::clone)
+    }
 }
 
 fn main() -> ExitCode {
@@ -77,7 +98,7 @@ fn handle(
             },
             None,
         ),
-        Request::Open { id } => {
+        Request::Open { id, extension } => {
             let Some(fd) = fd else {
                 return failed(id, "no file descriptor attached");
             };
@@ -90,26 +111,50 @@ fn handle(
                 Ok(source) => source,
                 Err(error) => return failed(id, &format!("cannot map file: {error}")),
             };
-            match guarded(|| info(&source)) {
-                Ok(info) => {
-                    files.insert(id, OpenFile { source, _fd: fd });
-                    (
-                        Reply::Opened {
-                            id,
-                            info: Box::new(info),
-                            micros: micros(),
-                        },
-                        None,
-                    )
+            let (info, rawler, system) = match guarded(|| info(&source)) {
+                Ok(info) => (info, true, None),
+                Err(raw_error) => {
+                    match guarded(|| SystemFile::open(source.buf(), extension.as_deref())) {
+                        Ok((file, info)) => (info, false, Some(Ok(file))),
+                        Err(system_error) => {
+                            return failed(id, &format!("{raw_error}; system: {system_error}"))
+                        }
+                    }
                 }
-                Err(error) => failed(id, &error),
-            }
+            };
+            files.insert(
+                id,
+                OpenFile {
+                    source,
+                    _fd: fd,
+                    rawler,
+                    system,
+                    extension,
+                },
+            );
+            (
+                Reply::Opened {
+                    id,
+                    info: Box::new(info),
+                    micros: micros(),
+                },
+                None,
+            )
         }
         Request::Preview { id } => {
-            let Some(file) = files.get(&id) else {
+            let Some(file) = files.get_mut(&id) else {
                 return failed(id, "file not open");
             };
-            match guarded(|| preview(&file.source)) {
+            let from_rawler = if file.rawler {
+                guarded(|| preview(&file.source))
+            } else {
+                Err(String::new())
+            };
+            let result = from_rawler.or_else(|raw_error| {
+                let system = file.system()?;
+                guarded(|| system.preview()).map_err(|e| join(&raw_error, &e))
+            });
+            match result {
                 Ok((image, buffer)) => (
                     Reply::Preview {
                         id,
@@ -122,10 +167,19 @@ fn handle(
             }
         }
         Request::Sensor { id } => {
-            let Some(file) = files.get(&id) else {
+            let Some(file) = files.get_mut(&id) else {
                 return failed(id, "file not open");
             };
-            match guarded(|| sensor(&file.source)) {
+            let from_rawler = if file.rawler {
+                guarded(|| sensor(&file.source))
+            } else {
+                Err(String::new())
+            };
+            let result = from_rawler.or_else(|raw_error| {
+                let system = file.system()?;
+                guarded(|| system.develop()).map_err(|e| join(&raw_error, &e))
+            });
+            match result {
                 Ok((sensor, info, buffer)) => (
                     Reply::Sensor {
                         id,
@@ -142,6 +196,15 @@ fn handle(
             files.remove(&id);
             (Reply::Closed { id }, None)
         }
+    }
+}
+
+/// Both decoders' reasons, when both failed.
+fn join(raw_error: &str, system_error: &str) -> String {
+    if raw_error.is_empty() {
+        system_error.to_owned()
+    } else {
+        format!("{raw_error}; system: {system_error}")
     }
 }
 
@@ -172,6 +235,8 @@ fn info(source: &RawSource) -> Result<FileInfo, String> {
         .map_err(|e| e.to_string())?;
     let e = metadata.exif;
     Ok(FileInfo {
+        decoder: loft_raw_protocol::Decoder::Raw,
+        raw: true,
         make: metadata.make,
         model: metadata.model,
         orientation: e.orientation.unwrap_or(0),
@@ -204,6 +269,8 @@ fn describe(image: &RawImage) -> SensorInfo {
         _ => String::new(),
     };
     SensorInfo {
+        origin: loft_raw_protocol::PixelOrigin::Sensor,
+        scale: 1.0,
         bits_per_sample: image.bps as u8,
         cfa,
         white_balance: image.wb_coeffs,
@@ -237,6 +304,7 @@ fn preview(source: &RawSource) -> Result<(ImageLayout, SharedBuffer), String> {
     let layout = ImageLayout {
         width: rgba.width(),
         height: rgba.height(),
+        color_space: loft_raw_protocol::PreviewSpace::Srgb,
     };
     let mut buffer = SharedBuffer::create(layout.bytes()).map_err(|e| e.to_string())?;
     buffer.map.copy_from_slice(rgba.as_raw());

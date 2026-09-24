@@ -11,3 +11,14 @@ repository = "https://github.com/LightLoft/raw-helper"
 bytemuck = "1.25.2"
 loft-raw-protocol = { path = "../protocol" }
 rawler = "=0.8.0"
+
+# System decoders (src/system/macos.rs): ImageIO for non-raw formats and previews, Core Image for
+# raw files rawler cannot read.
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6.4"
+objc2-core-foundation = { version = "0.3.2", default-features = false, features = ["std", "CFCGTypes", "CFData", "CFDictionary", "CFString"] }
+objc2-core-graphics = { version = "0.3.2", default-features = false, features = ["std", "CGColorSpace", "CGImage"] }
+objc2-core-image = { version = "0.3.2", default-features = false, features = ["std", "CIContext", "CIFilter", "CIImage", "CIRAWFilter", "objc2-core-foundation", "objc2-core-graphics", "objc2-image-io"] }
+objc2-foundation = { version = "0.3.2", default-features = false, features = ["std", "NSArray", "NSData", "NSDictionary", "NSObject", "NSString", "NSValue"] }
+objc2-image-io = { version = "0.3.2", default-features = false, features = ["std", "CGImageProperties", "CGImageSource", "objc2-core-graphics"] }
+objc2-uniform-type-identifiers = { version = "0.3.2", default-features = false, features = ["std", "UTType"] }

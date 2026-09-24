@@ -14,7 +14,7 @@ pub mod shm;
 use serde::{Deserialize, Serialize};
 
 /// Bumped on any incompatible change; both sides check it with `Hello`.
-pub const PROTOCOL_VERSION: u32 = 1;
+pub const PROTOCOL_VERSION: u32 = 2;
 
 /// Upper bound on a control message: a peer can never make the other allocate more.
 pub const MAX_MESSAGE_BYTES: usize = 1 << 20;
@@ -24,9 +24,11 @@ pub enum Request {
     Hello {
         version: u32,
     },
-    /// The raw file's descriptor is attached.
+    /// The file's descriptor is attached. `extension` (never a path) helps the system decoders
+    /// identify formats they cannot recognise from the bytes alone.
     Open {
         id: u64,
+        extension: Option<String>,
     },
     /// Largest embedded preview, decoded to RGBA8.
     Preview {
@@ -75,11 +77,21 @@ pub enum Reply {
     },
 }
 
-/// 8-bit RGBA pixels, rows packed (`width * 4` bytes per row).
+/// 8-bit RGBA pixels, rows packed (`width * 4` bytes per row), in `color_space`.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub struct ImageLayout {
     pub width: u32,
     pub height: u32,
+    pub color_space: PreviewSpace,
+}
+
+/// Colour space of preview pixels.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum PreviewSpace {
+    /// Embedded camera JPEG, taken as sRGB (its own profile is not applied).
+    Srgb,
+    /// Colour-managed by the system into Display P3.
+    DisplayP3,
 }
 
 impl ImageLayout {
@@ -91,6 +103,8 @@ impl ImageLayout {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Sample {
     U16,
+    /// IEEE half float.
+    F16,
     F32,
 }
 
@@ -99,7 +113,7 @@ pub enum Sample {
 pub struct SensorLayout {
     pub width: u32,
     pub height: u32,
-    /// 1 for a colour filter mosaic, 3 for linear RGB.
+    /// 1 for a colour filter mosaic, 3 for linear RGB, 4 for system-developed RGBA.
     pub components: u8,
     pub sample: Sample,
 }
@@ -107,16 +121,30 @@ pub struct SensorLayout {
 impl SensorLayout {
     pub fn bytes(&self) -> usize {
         let size = match self.sample {
-            Sample::U16 => 2,
+            Sample::U16 | Sample::F16 => 2,
             Sample::F32 => 4,
         };
         self.width as usize * self.height as usize * self.components as usize * size
     }
 }
 
+/// Which decoder read the file.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Decoder {
+    /// The raw decoder library: sensor samples as recorded.
+    #[default]
+    Raw,
+    /// The operating system's image decoders (non-raw formats, or raw files the raw decoder
+    /// cannot read).
+    System,
+}
+
 /// What the information panel and the library need, read from the headers only.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct FileInfo {
+    pub decoder: Decoder,
+    /// Whether the file holds raw sensor data (as opposed to an already developed image).
+    pub raw: bool,
     pub make: String,
     pub model: String,
     /// EXIF orientation (1-8), 0 when absent.
@@ -124,9 +152,25 @@ pub struct FileInfo {
     pub exif: Exif,
 }
 
+/// Where the samples stand in the development pipeline.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum PixelOrigin {
+    /// As the sensor recorded them (mosaic, or linear raw): the engine develops them.
+    #[default]
+    Sensor,
+    /// Already demosaiced and colour-converted by the system, without tone curve or look:
+    /// scene-linear RGBA, extended range, ITU-R BT.2020 primaries, D65 white. The engine injects
+    /// them after its own demosaicing stage.
+    SystemLinearBt2020,
+}
+
 /// What the engine needs to develop the sensor data.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct SensorInfo {
+    pub origin: PixelOrigin,
+    /// Resolution of the samples relative to the file: 1.0 at full size, lower when a very large
+    /// image was developed by the system at reduced size to bound memory.
+    pub scale: f32,
     pub bits_per_sample: u8,
     /// Colour filter pattern, e.g. `RGGB` or a 6x6 X-Trans pattern; empty for linear RGB.
     pub cfa: String,
