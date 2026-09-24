@@ -1,0 +1,13 @@
+[package]
+name = "loft-raw-helper"
+version = "0.1.0"
+edition = "2021"
+license = "LGPL-2.1-only"
+publish = false
+description = "Sandboxed helper process that decodes raw photo files with rawler for LightLoft"
+repository = "https://github.com/LightLoft/raw-helper"
+
+[dependencies]
+bytemuck = "1.25.2"
+loft-raw-protocol = { path = "../protocol" }
+rawler = "=0.8.0"

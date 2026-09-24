@@ -1,0 +1,14 @@
+[package]
+name = "loft-raw-protocol"
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+publish = false
+description = "Messages between LightLoft and its raw decoding helper process"
+repository = "https://github.com/LightLoft/raw-helper"
+
+[dependencies]
+memmap2 = "0.9.11"
+postcard = { version = "1.1.3", default-features = false, features = ["use-std"] }
+rustix = { version = "1.1.5", features = ["net", "shm", "fs", "mm", "std"] }
+serde = { version = "1.0.229", features = ["derive"] }
