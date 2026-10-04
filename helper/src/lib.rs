@@ -5,4 +5,5 @@
 
 pub mod alloc;
 pub mod decode;
+pub mod opcodes;
 pub mod system;

@@ -14,7 +14,7 @@ pub mod shm;
 use serde::{Deserialize, Serialize};
 
 /// Bumped on any incompatible change; both sides check it with `Hello`.
-pub const PROTOCOL_VERSION: u32 = 2;
+pub const PROTOCOL_VERSION: u32 = 3;
 
 /// Upper bound on a control message: a peer can never make the other allocate more.
 pub const MAX_MESSAGE_BYTES: usize = 1 << 20;
@@ -187,14 +187,23 @@ pub struct SensorInfo {
     pub white_balance: [f32; 4],
     pub black_levels: Vec<f32>,
     pub white_levels: Vec<f32>,
-    /// XYZ -> camera matrices by illuminant (EXIF light source code), row-major.
+    /// XYZ -> camera matrices by illuminant (EXIF light source code), row-major, to the samples
+    /// as stored (a DNG's analog balance included).
     pub color_matrices: Vec<ColorMatrix>,
     /// Usable area and recommended crop, as `[x, y, width, height]`.
     pub active_area: Option<[u32; 4]>,
     pub crop_area: Option<[u32; 4]>,
     /// EXIF orientation (1-8) as the decoder reads it.
     pub orientation: u16,
+    /// The file's own linearisation of its samples once scaled between black and white (a
+    /// lossy DNG's stored values are not linear): for each plane, `LINEARIZATION_POINTS` values
+    /// evenly spaced from 0 to 1, to interpolate. Empty when the samples are linear; planes past
+    /// the list are linear.
+    pub linearization: Vec<Vec<f32>>,
 }
+
+/// Points of a linearisation table (`SensorInfo::linearization`).
+pub const LINEARIZATION_POINTS: usize = 128;
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ColorMatrix {

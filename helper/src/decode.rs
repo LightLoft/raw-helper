@@ -6,8 +6,9 @@ use loft_raw_protocol::shm::SharedBuffer;
 use loft_raw_protocol::{
     ColorMatrix, Exif, FileInfo, ImageLayout, Sample, SensorInfo, SensorLayout,
 };
-use rawler::decoders::{Decoder, RawDecodeParams};
-use rawler::formats::tiff::Rational;
+use rawler::decoders::{Decoder, RawDecodeParams, WellKnownIFD};
+use rawler::formats::tiff::reader::TiffReader;
+use rawler::formats::tiff::{GenericTiffReader, Rational, Value};
 use rawler::rawimage::RawPhotometricInterpretation;
 use rawler::rawsource::RawSource;
 use rawler::{RawImage, RawImageData};
@@ -76,6 +77,7 @@ pub fn describe(image: &RawImage) -> SensorInfo {
         active_area: area(&image.active_area),
         crop_area: area(&image.crop_area),
         orientation: image.orientation.to_u16(),
+        linearization: Vec::new(),
     }
 }
 
@@ -120,5 +122,55 @@ pub fn sensor(source: &RawSource) -> Result<(SensorLayout, SensorInfo, SharedBuf
     }
     let mut buffer = SharedBuffer::create(bytes.len()).map_err(|e| e.to_string())?;
     buffer.map.copy_from_slice(bytes);
-    Ok((layout, describe(&image), buffer))
+    let mut info = describe(&image);
+    if let Some(gains) = analog_balance(source) {
+        apply_analog_balance(&mut info, gains);
+    }
+    info.linearization = linearization(decoder.as_ref(), layout.width, layout.height);
+    Ok((layout, info, buffer))
+}
+
+/// A DNG's linearisation opcodes (opcodes.rs), from its raw image's OpcodeList2.
+fn linearization(decoder: &dyn Decoder, width: u32, height: u32) -> Vec<Vec<f32>> {
+    let Ok(Some(tags)) = decoder.ifd(WellKnownIFD::VirtualDngRawTags) else {
+        return Vec::new();
+    };
+    match tags
+        .get_entry(rawler::tags::DngTag::OpcodeList2)
+        .map(|e| &e.value)
+    {
+        Some(Value::Undefined(bytes) | Value::Byte(bytes)) => {
+            crate::opcodes::linearization(bytes, width, height)
+        }
+        _ => Vec::new(),
+    }
+}
+
+/// A DNG's AnalogBalance: gains already applied to its samples (DNG specification, chapter 6).
+/// Its colour matrices describe the camera before them.
+fn analog_balance(source: &RawSource) -> Option<[f32; 3]> {
+    let bytes = source.buf();
+    if bytes.len() < 8 || !GenericTiffReader::is_tiff(bytes) {
+        return None;
+    }
+    let tiff = GenericTiffReader::new_with_buffer(bytes, 0, 0, Some(1)).ok()?;
+    let entry = tiff.get_entry(rawler::tags::DngTag::AnalogBalance)?;
+    if entry.count() < 3 {
+        return None;
+    }
+    let gains = [0, 1, 2].map(|i| entry.force_f32(i));
+    gains
+        .iter()
+        .all(|g| g.is_finite() && *g > 0.0)
+        .then_some(gains)
+}
+
+/// Makes the colour matrices map XYZ to the samples as stored: each row (a camera channel)
+/// times its analog gain.
+fn apply_analog_balance(info: &mut SensorInfo, gains: [f32; 3]) {
+    for matrix in &mut info.color_matrices {
+        for (row, gain) in matrix.values.chunks_mut(3).zip(gains) {
+            row.iter_mut().for_each(|v| *v *= gain);
+        }
+    }
 }
