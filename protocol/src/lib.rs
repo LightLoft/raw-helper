@@ -14,7 +14,7 @@ pub mod shm;
 use serde::{Deserialize, Serialize};
 
 /// Bumped on any incompatible change; both sides check it with `Hello`.
-pub const PROTOCOL_VERSION: u32 = 3;
+pub const PROTOCOL_VERSION: u32 = 4;
 
 /// Upper bound on a control message: a peer can never make the other allocate more.
 pub const MAX_MESSAGE_BYTES: usize = 1 << 20;
@@ -200,6 +200,46 @@ pub struct SensorInfo {
     /// evenly spaced from 0 to 1, to interpolate. Empty when the samples are linear; planes past
     /// the list are linear.
     pub linearization: Vec<Vec<f32>>,
+    /// The file's own lens corrections (a DNG's opcodes): gains over the samples before
+    /// demosaicing (lens shading), a radial vignetting after it, and a rectilinear warp
+    /// (distortion and the planes' lateral chromatic aberration).
+    pub gain_maps: Vec<GainMap>,
+    pub radial_vignette: Option<RadialVignette>,
+    pub warp: Option<Warp>,
+}
+
+/// Gains over a grid of points, for the samples of planes `plane`..`plane + planes` every
+/// `pitch` rows and columns inside `area` (`[top, left, bottom, right]`, in samples). The grid
+/// starts at `origin` and steps by `spacing` (vertical, horizontal), in coordinates relative to
+/// the image (0 to 1); `gains` holds `points` (vertical, horizontal) × `map_planes` values,
+/// row by row, the planes of a point together.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct GainMap {
+    pub area: [u32; 4],
+    pub plane: u32,
+    pub planes: u32,
+    pub pitch: [u32; 2],
+    pub points: [u32; 2],
+    pub spacing: [f64; 2],
+    pub origin: [f64; 2],
+    pub map_planes: u32,
+    pub gains: Vec<f32>,
+}
+
+/// A radial vignetting correction: the gain 1 + k0 r² + k1 r⁴ + k2 r⁶ + k3 r⁸ + k4 r¹⁰ about
+/// `centre` (relative to the image, horizontal then vertical).
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct RadialVignette {
+    pub k: [f64; 5],
+    pub centre: [f64; 2],
+}
+
+/// A rectilinear warp: for each plane, radial (kr0..kr3) and tangential (kt0, kt1)
+/// coefficients, about `centre` (relative to the image, horizontal then vertical).
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct Warp {
+    pub planes: Vec<[f64; 6]>,
+    pub centre: [f64; 2],
 }
 
 /// Points of a linearisation table (`SensorInfo::linearization`).

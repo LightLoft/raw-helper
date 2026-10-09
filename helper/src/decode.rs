@@ -78,6 +78,7 @@ pub fn describe(image: &RawImage) -> SensorInfo {
         crop_area: area(&image.crop_area),
         orientation: image.orientation.to_u16(),
         linearization: Vec::new(),
+        ..SensorInfo::default()
     }
 }
 
@@ -126,24 +127,22 @@ pub fn sensor(source: &RawSource) -> Result<(SensorLayout, SensorInfo, SharedBuf
     if let Some(gains) = analog_balance(source) {
         apply_analog_balance(&mut info, gains);
     }
-    info.linearization = linearization(decoder.as_ref(), layout.width, layout.height);
-    Ok((layout, info, buffer))
-}
-
-/// A DNG's linearisation opcodes (opcodes.rs), from its raw image's OpcodeList2.
-fn linearization(decoder: &dyn Decoder, width: u32, height: u32) -> Vec<Vec<f32>> {
-    let Ok(Some(tags)) = decoder.ifd(WellKnownIFD::VirtualDngRawTags) else {
-        return Vec::new();
-    };
-    match tags
-        .get_entry(rawler::tags::DngTag::OpcodeList2)
-        .map(|e| &e.value)
-    {
-        Some(Value::Undefined(bytes) | Value::Byte(bytes)) => {
-            crate::opcodes::linearization(bytes, width, height)
+    if let Ok(Some(tags)) = decoder.ifd(WellKnownIFD::VirtualDngRawTags) {
+        let list = |tag| match tags.get_entry(tag).map(|e| &e.value) {
+            Some(Value::Undefined(bytes) | Value::Byte(bytes)) => Some(bytes.as_slice()),
+            _ => None,
+        };
+        // A DNG's opcodes: its linearisation (opcodes.rs) and lens corrections
+        // (corrections.rs).
+        if let Some(list2) = list(rawler::tags::DngTag::OpcodeList2) {
+            info.linearization = crate::opcodes::linearization(list2, layout.width, layout.height);
+            info.gain_maps = crate::corrections::gain_maps(list2);
         }
-        _ => Vec::new(),
+        if let Some(list3) = list(rawler::tags::DngTag::OpcodeList3) {
+            (info.radial_vignette, info.warp) = crate::corrections::lens(list3);
+        }
     }
+    Ok((layout, info, buffer))
 }
 
 /// A DNG's AnalogBalance: gains already applied to its samples (DNG specification, chapter 6).

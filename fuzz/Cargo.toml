@@ -41,3 +41,10 @@ path = "fuzz_targets/reply.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "opcodes"
+path = "fuzz_targets/opcodes.rs"
+test = false
+doc = false
+bench = false

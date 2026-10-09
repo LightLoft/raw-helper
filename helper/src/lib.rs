@@ -4,6 +4,7 @@
 //! Licensed LGPL-2.1-only, like rawler.
 
 pub mod alloc;
+pub mod corrections;
 pub mod decode;
 pub mod opcodes;
 pub mod system;

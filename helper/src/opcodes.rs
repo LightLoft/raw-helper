@@ -1,8 +1,8 @@
 //! A DNG's linearisation opcodes (OpcodeList2, DNG specification 1.4, chapter 7): MapPolynomial
 //! and MapTable over the whole image, applied to the samples once scaled between black and
 //! white. A lossy DNG stores 8-bit values that only become linear through them. They are turned
-//! into tables the engine interpolates; the other opcodes (lens corrections, gain maps) are left
-//! to the application. The list comes from the file: every count and size is checked.
+//! into tables the engine interpolates; the lens corrections are read by corrections.rs. The
+//! list comes from the file: every count and size is checked.
 
 use loft_raw_protocol::LINEARIZATION_POINTS;
 
@@ -14,20 +14,20 @@ const DEGREE_MAX: u32 = 8;
 const PLANES_MAX: u32 = 4;
 
 /// Big-endian reader over the list (opcode lists are big-endian whatever the file's order).
-struct Reader<'a> {
-    bytes: &'a [u8],
-    at: usize,
+pub(crate) struct Reader<'a> {
+    pub bytes: &'a [u8],
+    pub at: usize,
 }
 
-impl Reader<'_> {
-    fn take(&mut self, n: usize) -> Option<&[u8]> {
+impl<'a> Reader<'a> {
+    pub fn take(&mut self, n: usize) -> Option<&'a [u8]> {
         let end = self.at.checked_add(n)?;
         let slice = self.bytes.get(self.at..end)?;
         self.at = end;
         Some(slice)
     }
 
-    fn u32(&mut self) -> Option<u32> {
+    pub fn u32(&mut self) -> Option<u32> {
         Some(u32::from_be_bytes(self.take(4)?.try_into().ok()?))
     }
 
@@ -35,9 +35,34 @@ impl Reader<'_> {
         Some(u16::from_be_bytes(self.take(2)?.try_into().ok()?))
     }
 
-    fn f64(&mut self) -> Option<f64> {
+    pub fn f64(&mut self) -> Option<f64> {
         Some(f64::from_be_bytes(self.take(8)?.try_into().ok()?))
     }
+
+    pub fn f32(&mut self) -> Option<f32> {
+        Some(f32::from_be_bytes(self.take(4)?.try_into().ok()?))
+    }
+}
+
+/// The opcodes of a list, as (identifier, body), up to the first one whose size runs past it.
+pub(crate) fn each(list: &[u8]) -> Vec<(u32, &[u8])> {
+    let mut out = Vec::new();
+    let mut r = Reader { bytes: list, at: 0 };
+    let Some(count) = r.u32() else {
+        return out;
+    };
+    for _ in 0..count {
+        let (Some(id), Some(_version), Some(_flags), Some(size)) =
+            (r.u32(), r.u32(), r.u32(), r.u32())
+        else {
+            break;
+        };
+        let Some(body) = r.take(size as usize) else {
+            break;
+        };
+        out.push((id, body));
+    }
+    out
 }
 
 /// The opcode's area and planes, when it covers the whole `width` × `height` image, every row
